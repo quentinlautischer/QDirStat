@@ -1,0 +1,23 @@
+[package]
+name = "rust_playground"
+version = "0.1.0"
+authors = ["Quentin Lautischer <qlautischer@gmail.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+name="utils"
+path="src/utils_lib/lib.rs"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+termcolor = "1.1"
+http = "0.2.4"
+hyper = { version = "0.14", features = ["full"] }
+reqwest = { version = "0.11", features = ["json"] }
+hyper-tls = "0.5.0"
+crossterm = "0.19"
+console="*"
+dialoguer="*"
+indicatif="*"

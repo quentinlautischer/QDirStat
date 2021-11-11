@@ -1,0 +1,40 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"type": "cargo",
+			"subcommand": "build",
+			"problemMatcher": [
+				"$rustc"
+			],
+			"group": "build",
+			"label": "Rust: cargo build - QDirStat"
+		},
+		{
+			"label": "Rust: cargo run in debug",
+			"command": "cargo",
+			"args": ["run"],
+			"problemMatcher": [
+				"$rustc"
+			],
+			"presentation": {
+				"focus": true
+			},
+		},
+		{
+			"label": "Rust: cargo run in release",
+			"command": "cargo",
+			"args": ["run", "--release"],
+			"problemMatcher": [
+				"$rustc"
+			],
+			"group": {
+				"kind": "build",
+				"isDefault": true
+			},
+			"presentation": {
+				"focus": true
+			},
+		}
+	]
+}

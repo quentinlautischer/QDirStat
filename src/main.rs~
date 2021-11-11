@@ -1,0 +1,47 @@
+extern crate utils;
+
+mod learning;
+#[allow(unused_imports)]
+use learning::basics;
+#[allow(unused_imports)]
+
+use learning::advanced;
+
+mod projects;
+
+// Set backtrace with export RUST_BACKTRACE=1(unix) or set RUST_BACKTRACE=1(cmd) or $Env:RUST_BACKTRACE=1(powershell)
+#[tokio::main]
+pub async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    // projects::qdirstat::run();
+    // projects::qio::main();
+    projects::qrefcli::main().await?;
+
+    // basics::run();
+    //advanced::run();
+
+
+
+
+
+    Ok(())
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
