@@ -11,7 +11,7 @@ name="utils"
 path="src/utils_lib/lib.rs"
 
 [dependencies]
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1.28.0", features = ["full"] }
 termcolor = "1.1"
 http = "0.2.4"
 hyper = { version = "0.14", features = ["full"] }

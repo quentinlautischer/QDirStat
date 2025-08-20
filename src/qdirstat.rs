@@ -15,21 +15,22 @@ use dialoguer::{
 };
 use console::Term;
 
+#[cfg(target_os = "windows")]
 fn open_directory(fse: &FileSystemEntry) {
-    let cmd_string;
-    if cfg!(windows) {
-        cmd_string = "explorer";
-    } else if cfg!(osx) {
-        cmd_string = "open";
-    } else if cfg!(unix) {
-        cmd_string = "xdg-open";
-    } else {
-        utils::log_e(format!("Could not match current OS with an open command. Here is the current path: {}", fse.path_string).as_str());
-        return;
-    }
-
     let path = fse.path_string.to_string();
-    std::process::Command::new(cmd_string).arg(path).spawn().unwrap( );
+    std::process::Command::new("explorer").arg(path).spawn().unwrap( );
+}
+
+#[cfg(target_os = "macos")]
+fn open_directory(fse: &FileSystemEntry) {
+    let path = fse.path_string.to_string();
+    std::process::Command::new("open").arg(path).spawn().unwrap( );
+}
+
+#[cfg(target_os = "linux")]
+fn open_directory(fse: &FileSystemEntry) {
+    let path = fse.path_string.to_string();
+    std::process::Command::new("xdg-open").arg(path).spawn().unwrap( );
 }
 
 /// This method will return a vector of all drives which exist on the windows filesystem
@@ -50,23 +51,17 @@ fn list_of_available_drives() -> Vec<String> {
 }
 
 fn select_drive() -> std::io::Result<String> {
-    #[cfg(debug_assertions)]
-    return Ok(String::from("C:"));
+    let items : Vec<String> = list_of_available_drives();
+    let selection = Select::with_theme(&ColorfulTheme::default())
+    .items(&items)
+    .default(0)
+    .interact_on_opt(&Term::stderr())?;
 
-    #[allow(unreachable_code)]
-    {
-        let items : Vec<String> = list_of_available_drives();
-        let selection = Select::with_theme(&ColorfulTheme::default())
-        .items(&items)
-        .default(0)
-        .interact_on_opt(&Term::stderr())?;
-
-        match selection {
-            Some(index) => {
-                Ok(items[index].to_string())
-            },
-            None => panic!("No drive selected")
-        }
+    match selection {
+        Some(index) => {
+            Ok(items[index].to_string())
+        },
+        None => panic!("No drive selected")
     }
 }
 
@@ -125,69 +120,53 @@ fn tab(cmd: &mut String, current: &FileSystemEntry) {
 
 fn get_next_command(cmd: &mut String, _current: &FileSystemEntry) {
 
-    // the console crate doesn't work when debugging. So I've added this
-    // #[cfg(debug_assertions)] / #[allow(unreachable_code)] to have diff logic
-    // for release vs. debug
-
-    #[cfg(debug_assertions)]
-    {
-        match std::io::stdin().read_line(cmd) {
-            Ok(_bytes_read) => { },
-            Err(_) => panic!("Failed to readline")
-        }
-        return;
-    }
-
-    #[allow(unreachable_code)]
-    {
-        let mut term = Term::stdout();
-        loop {
-            match term.read_key() {
-                Ok(key) => {
-                    match key {
-                        console::Key::Backspace => {
-                            if cmd.is_empty() {
+    let mut term = Term::stdout();
+    loop {
+        match term.read_key() {
+            Ok(key) => {
+                match key {
+                    console::Key::Backspace => {
+                        if cmd.is_empty() {
+                            continue;
+                        }
+                        cmd.remove(cmd.len()-1);
+                        term.clear_line().expect("failed to clear terminal");
+                        term.write(cmd.as_bytes()).expect("failed to write to terminal");
+                        continue;
+                    },
+                    console::Key::Tab => {
+                        tab(cmd, _current);
+                        term.clear_line().expect("failed to clear terminal");
+                        term.write(cmd.as_bytes()).expect("failed to write to terminal");
+                    },
+                    console::Key::Enter => {
+                        term.write_line("").expect("failed to write to terminal");
+                        return;
+                    }
+                    console::Key::Char(c) => {
+                        match c {
+                            '\t' => {
+                                tab(cmd, _current);
+                                term.clear_line().expect("failed to clear terminal");
+                                term.write(cmd.as_bytes()).expect("failed to write to terminal");
+                                continue;
+                            },
+                            _ => {
+                                cmd.push(c);
+                                let mut b = [0; 2];
+                                c.encode_utf8(&mut b);
+                                term.write(&b).expect("failed to write to terminal");
                                 continue;
                             }
-                            cmd.remove(cmd.len()-1);
-                            term.clear_line().expect("failed to clear terminal");
-                            term.write(cmd.as_bytes()).expect("failed to write to terminal");
-                            continue;
-                        },
-                        console::Key::Tab => {
-                            tab(cmd, _current);
-                            term.clear_line().expect("failed to clear terminal");
-                            term.write(cmd.as_bytes()).expect("failed to write to terminal");
-                        },
-                        console::Key::Enter => {
-                            term.write_line("").expect("failed to write to terminal");
-                            return;
                         }
-                        console::Key::Char(c) => {
-                            match c {
-                                '\t' => {
-                                    tab(cmd, _current);
-                                    term.clear_line().expect("failed to clear terminal");
-                                    term.write(cmd.as_bytes()).expect("failed to write to terminal");
-                                    continue;
-                                },
-                                _ => {
-                                    cmd.push(c);
-                                    let mut b = [0; 2];
-                                    c.encode_utf8(&mut b);
-                                    term.write(&b).expect("failed to write to terminal");
-                                    continue;
-                                }
-                            }
-                            
-                        },
-                        _ => { continue; }
-                    }
-                },
-                Err(e) => {
-                    println!("{:?}", e);
-                },
-            }
+                        
+                    },
+                    _ => { continue; }
+                }
+            },
+            Err(e) => {
+                println!("{:?}", e);
+            },
         }
     }
 }
@@ -228,6 +207,7 @@ pub fn run() {
                 utils::log("\t cd: Change current directory. (e.g. cd .. or cd Program Files)");
                 utils::log("\t scan: Recursive scan from current directory downward [Not Implemented]");
                 utils::log("\t open: Opens current directory in the file explorer");
+                utils::log("\t delete: ?? Crazy of you to think I'd take such responsibility. Open the folder and do it yourself!");
                 utils::log("\t quit: Quit program");
             },
             Commands::Quit => {
