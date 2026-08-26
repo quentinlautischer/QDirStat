@@ -138,9 +138,9 @@ impl FileSystemEntry {
             return;
         }
 
-        // Largest first: the whole point is spotting what is eating the drive.
+        // Smallest last: the biggest entries end up nearest the prompt, where the eye already is.
         let mut sorted = children.iter().collect::<Vec::<&FileSystemEntry>>();
-        sorted.sort_by_key(|entry| std::cmp::Reverse(entry.len));
+        sorted.sort_by_key(|entry| entry.len);
 
         utils::log("");
         utils::log(format!("\tDirectory: {}", self.path_string).as_str());
