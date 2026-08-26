@@ -16,21 +16,26 @@ use dialoguer::{
 use console::Term;
 
 #[cfg(target_os = "windows")]
-fn open_directory(fse: &FileSystemEntry) {
-    let path = fse.path_string.to_string();
-    std::process::Command::new("explorer").arg(path).spawn().unwrap( );
-}
+const FILE_MANAGER: &str = "explorer";
 
 #[cfg(target_os = "macos")]
-fn open_directory(fse: &FileSystemEntry) {
-    let path = fse.path_string.to_string();
-    std::process::Command::new("open").arg(path).spawn().unwrap( );
-}
+const FILE_MANAGER: &str = "open";
 
 #[cfg(target_os = "linux")]
+const FILE_MANAGER: &str = "xdg-open";
+
+#[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 fn open_directory(fse: &FileSystemEntry) {
     let path = fse.path_string.to_string();
-    std::process::Command::new("xdg-open").arg(path).spawn().unwrap( );
+    match std::process::Command::new(FILE_MANAGER).arg(path).spawn() {
+        Ok(_child) => {},
+        Err(e) => utils::log_w(format!("Failed to open the directory: {}", e).as_str()),
+    }
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+fn open_directory(_fse: &FileSystemEntry) {
+    utils::log_w("Opening a directory is not supported on this platform.");
 }
 
 /// This method will return a vector of all drives which exist on the windows filesystem
@@ -61,7 +66,11 @@ fn select_drive() -> std::io::Result<String> {
         Some(index) => {
             Ok(items[index].to_string())
         },
-        None => panic!("No drive selected")
+        // Backing out of the drive picker is a normal way to leave, not a crash.
+        None => {
+            println!("\n No drive selected. Session terminated.");
+            std::process::exit(0);
+        }
     }
 }
 
@@ -118,9 +127,25 @@ fn tab(cmd: &mut String, current: &FileSystemEntry) {
     }
 }
 
+// Replaces whatever has been typed with a quit command so the caller's normal Quit
+// handling takes over. Used for Ctrl+C/Ctrl+D and for an unreadable terminal.
+fn quit(cmd: &mut String) {
+    cmd.clear();
+    cmd.push_str("quit");
+}
+
 fn get_next_command(cmd: &mut String, _current: &FileSystemEntry) {
 
     let mut term = Term::stdout();
+
+    // Without a terminal, read_key() returns Ok(Key::Unknown) immediately and forever,
+    // which would spin this loop at 100% CPU. There is no interactive session to have.
+    if !term.is_term() {
+        utils::log_e("QDirStat needs an interactive terminal.");
+        quit(cmd);
+        return;
+    }
+
     loop {
         match term.read_key() {
             Ok(key) => {
@@ -129,15 +154,16 @@ fn get_next_command(cmd: &mut String, _current: &FileSystemEntry) {
                         if cmd.is_empty() {
                             continue;
                         }
-                        cmd.remove(cmd.len()-1);
+                        // pop() is character aware; remove(len-1) splits multi-byte characters.
+                        cmd.pop();
                         term.clear_line().expect("failed to clear terminal");
-                        term.write(cmd.as_bytes()).expect("failed to write to terminal");
+                        term.write_all(cmd.as_bytes()).expect("failed to write to terminal");
                         continue;
                     },
                     console::Key::Tab => {
                         tab(cmd, _current);
                         term.clear_line().expect("failed to clear terminal");
-                        term.write(cmd.as_bytes()).expect("failed to write to terminal");
+                        term.write_all(cmd.as_bytes()).expect("failed to write to terminal");
                     },
                     console::Key::Enter => {
                         term.write_line("").expect("failed to write to terminal");
@@ -148,24 +174,34 @@ fn get_next_command(cmd: &mut String, _current: &FileSystemEntry) {
                             '\t' => {
                                 tab(cmd, _current);
                                 term.clear_line().expect("failed to clear terminal");
-                                term.write(cmd.as_bytes()).expect("failed to write to terminal");
+                                term.write_all(cmd.as_bytes()).expect("failed to write to terminal");
                                 continue;
+                            },
+                            // Ctrl+C and Ctrl+D
+                            '\u{3}' | '\u{4}' => {
+                                term.write_line("").expect("failed to write to terminal");
+                                quit(cmd);
+                                return;
                             },
                             _ => {
                                 cmd.push(c);
-                                let mut b = [0; 2];
-                                c.encode_utf8(&mut b);
-                                term.write(&b).expect("failed to write to terminal");
+                                // A char is up to 4 bytes in UTF-8, and encode_utf8 hands back a
+                                // str of exactly the right length, so nothing extra is echoed.
+                                let mut buffer = [0; 4];
+                                term.write_all(c.encode_utf8(&mut buffer).as_bytes()).expect("failed to write to terminal");
                                 continue;
                             }
                         }
-                        
+
                     },
                     _ => { continue; }
                 }
             },
             Err(e) => {
-                println!("{:?}", e);
+                // A closed or non-interactive stdin fails every read, so retrying here spins forever.
+                utils::log_e(format!("Failed to read from the terminal: {:?}", e).as_str());
+                quit(cmd);
+                return;
             },
         }
     }
@@ -199,6 +235,9 @@ pub fn run() {
         get_next_command(&mut command_string, current);
 
         let cmd : Command = command_string.to_command();
+        // Cleared here rather than at the end of the loop so that no early `continue`
+        // can leave the next command appended to this one.
+        command_string.clear();
 
         match cmd.command {
             Commands::Help => {
@@ -220,6 +259,7 @@ pub fn run() {
             Commands::ChangeDirectory => {
                 if cmd.args.len() < 1 {
                     utils::log_w("Change directory command requires an additional argument.");
+                    continue;
                 }
 
                 let target : String = cmd.args[0].to_ascii_lowercase();
@@ -239,14 +279,14 @@ pub fn run() {
 
                         if current.children().is_none() {
                             utils::log_w(format!("No entry matches target '{}'", target).as_str());
-                            return;
+                            continue;
                         }
-                        
+
                         let children = current.children().expect("No children");
                         match children.iter().position(|c| icmp(&c.identifier, &target)) {
                             None => {
                                 utils::log_w(format!("No entry matches target '{}'", target).as_str());
-                                return; 
+                                continue;
                             },
                             Some(idx) => { 
                                 let matching_entry = &children[idx];
@@ -275,11 +315,9 @@ pub fn run() {
                 println!("");
             },
             Commands::Scan => {
-                // root.scan();
+                utils::log_w("Recursive scan from the current directory is not implemented yet.");
             },
         }
-
-        command_string.clear();
     }
    
 }

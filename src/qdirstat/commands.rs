@@ -29,7 +29,7 @@ impl ToCommand for String {
             string_cmd = args[0].to_string();
             cmd.args = args[1..].to_vec();
         }
-        
+
         if string_cmd.eq("q") || string_cmd.eq("quit") || string_cmd.eq("exit") {
             cmd.command = Commands::Quit;
         }    
@@ -41,15 +41,10 @@ impl ToCommand for String {
         if string_cmd.eq("cd") {
             cmd.command =  Commands::ChangeDirectory;
 
-            // This is a little hacky too tired to do it right
-            let mut sentence: String = String::new();
-            for word in &args[1..] {
-                if sentence != "".to_string() {
-                    sentence.push(' ')
-                }
-                sentence.push_str(word)
-            }
-            cmd.args[0] = sentence;
+            // Directory names may contain spaces, so the whole tail is one argument.
+            // An empty tail leaves args empty; the caller reports the missing argument.
+            let target = args[1..].join(" ");
+            cmd.args = if target.is_empty() { Vec::new() } else { vec![target] };
         }
 
         if string_cmd.eq("h") || string_cmd.eq("help") || string_cmd.eq("?") {

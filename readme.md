@@ -28,13 +28,13 @@
 
 [![Product Name Screen Shot][product-screenshot]](product_screenshot.png)
 
-This program will help you quickly identify the files and folders on your system that are taking up the most space so you ca delete them an continue on with your day before your storage fills up and grinds to a halt.
+This program will help you quickly identify the files and folders on your system that are taking up the most space so you can delete them and continue on with your day before your storage fills up and grinds to a halt.
 
 <p align="right">(<a href="#top">back to top</a>)</p>
 
 ### Built With
 
-This section should list any major frameworks/libraries used to bootstrap your project. Leave any add-ons/plugins for the acknowledgements section. Here are a few examples.
+QDirStat is a terminal application built entirely on the Rust standard library, with only three small crates for terminal colour and prompts.
 
 * [Rust](https://www.rust-lang.org/)
 
@@ -59,7 +59,7 @@ To get a local copy up and running follow these simple example steps.
    ```sh
    cargo build
    ```
-4. Run the program
+3. Run the program
    ```sh
    cargo run
    ```

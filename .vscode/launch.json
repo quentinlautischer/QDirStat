@@ -7,15 +7,15 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug executable 'QDirStart'",
+            "name": "Debug executable 'qdirstat'",
             "cargo": {
                 "args": [
                     "build",
-                    "--bin=QDirStart",
-                    "--package=QDirStart"
+                    "--bin=qdirstat",
+                    "--package=qdirstat"
                 ],
                 "filter": {
-                    "name": "QDirStart",
+                    "name": "qdirstat",
                     "kind": "bin"
                 }
             },
@@ -25,16 +25,16 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug unit tests in executable 'QDirStart'",
+            "name": "Debug unit tests in executable 'qdirstat'",
             "cargo": {
                 "args": [
                     "test",
                     "--no-run",
-                    "--bin=QDirStart",
-                    "--package=QDirStart"
+                    "--bin=qdirstat",
+                    "--package=qdirstat"
                 ],
                 "filter": {
-                    "name": "QDirStart",
+                    "name": "qdirstat",
                     "kind": "bin"
                 }
             },

@@ -5,7 +5,6 @@ use filesystem_entry_type::FileSystemEntryType;
 use filesystem_entry_extensions::*;
 
 use std::fs;
-use std::io;
 
 use std::io::*;
 
@@ -59,19 +58,10 @@ impl FileSystemEntry {
         }
     }
 
+    /// The size of this entry's subtree. `calculate_children` rolls the totals up as it
+    /// scans, so this is already accurate for directories.
     pub fn size(&self) -> u64 {
-        match self.entry_type {
-            FileSystemEntryType::File => {
-                self.len
-            },
-            FileSystemEntryType::Directory => {
-                let mut sum : u64 = 0;
-                for child in self.children().expect("directory has no children?") {
-                    sum += child.size();
-                }
-                sum
-            }
-        }
+        self.len
     }
 
     pub fn children(&self) -> Option<&Vec::<FileSystemEntry>> {
@@ -90,12 +80,11 @@ impl FileSystemEntry {
 
                 let mut directory_items : Vec::<FileSystemEntry> = Vec::<FileSystemEntry>::new();
 
-                let res : io::Result<fs::ReadDir> = fs::read_dir(&self.path_string);
-                match res {
-                    std::io::Result::Err(_e) => {
-                        self.children = directory_items;
+                match fs::read_dir(&self.path_string) {
+                    Err(_e) => {
+                        // Unreadable directory: it contributes nothing rather than aborting the scan.
                     },
-                    std::io::Result::Ok(entry) => {
+                    Ok(entry) => {
                         for e in entry {
                             match e {
                                 Err(_e) => {
@@ -121,60 +110,54 @@ impl FileSystemEntry {
                                     }
                                     let mut new_entry = FileSystemEntry::new(&filename, &entry.path().as_path(), entry_descriptor, size);
                                     new_entry.calculate_children();
-                                    // size() will iterate the children just aquired for file size
-                                    new_entry.len = new_entry.size();
                                     directory_items.push(new_entry);
                                 }
-                                }
                             }
-                        self.children = directory_items;
+                        }
                     }
-                }    
+                }
+
+                self.children = directory_items;
+                // Every child already carries its own subtree total, so this roll-up is one level deep.
+                self.len = self.children.iter().map(|c| c.len).sum();
             }
         }
     }
 
     pub fn print(&self, visited_list: &Vec::<&String>) {
-        let mut children_view = Vec::<FileSystemEntryChildrenView>::new();  
-        for child in self.children().expect("I know you have a value") {
-            let c1 = child.clone();
-            children_view.push((c1.entry_type, c1.identifier, c1.len, c1.path_string));
+        let children = match self.children() {
+            Some(children) => children,
+            None => {
+                utils::log_w("Not a directory");
+                return;
+            }
+        };
+
+        if children.is_empty() {
+            utils::log("No directories");
+            return;
         }
 
-        if children_view.len() == 0 {
-            utils::log("No directories");
-        } else {
-            utils::log("");
-            utils::log(format!("\tDirectory: {}", self.path_string).as_str());
-            utils::log("");
-            children_view.sort_by_key(|k|k.2);
-            for view_entry in children_view.iter() {
-                if visited_list.contains(&&view_entry.3) {
-                    utils::log_s(format!(" {:?}  {} ({})", view_entry.0, view_entry.1, view_entry.2.bytes_to_readable()).as_str());
-                } else {
-                    utils::log(format!(" {:?}  {} ({})", view_entry.0, view_entry.1, view_entry.2.bytes_to_readable()).as_str());
-                }
+        // Largest first: the whole point is spotting what is eating the drive.
+        let mut sorted = children.iter().collect::<Vec::<&FileSystemEntry>>();
+        sorted.sort_by_key(|entry| std::cmp::Reverse(entry.len));
+
+        utils::log("");
+        utils::log(format!("\tDirectory: {}", self.path_string).as_str());
+        utils::log("");
+        for entry in sorted {
+            let line = format!(" {:?}  {} ({})", entry.entry_type, entry.identifier, entry.len.bytes_to_readable());
+            if visited_list.contains(&&entry.path_string) {
+                utils::log_s(line.as_str());
+            } else {
+                utils::log(line.as_str());
             }
         }
     }
 }
 
-pub type FileSystemEntryChildrenView = (FileSystemEntryType, String, u64, String);
-
 impl std::fmt::Display for FileSystemEntry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, " {:?}  {} ({})", self.entry_type, self.identifier, self.size().bytes_to_readable())
-    }
-}
-
-impl Clone for FileSystemEntry {
-    fn clone(&self) -> FileSystemEntry {
-        FileSystemEntry {
-            identifier: self.identifier.clone(),
-            path_string: self.path_string.clone(),
-            entry_type: self.entry_type.clone(),
-            len: self.len,
-            children: Vec::<FileSystemEntry>::new()
-        }
     }
 }
