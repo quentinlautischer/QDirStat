@@ -211,10 +211,34 @@ fn icmp(a: &String, b: &String) -> bool {
     return a.to_ascii_lowercase() == b.to_ascii_lowercase();
 }
 
+/// Why a session stopped: the user left the program, or asked to go back and pick
+/// another volume.
+enum SessionEnd {
+    Quit,
+    Reset,
+}
+
 #[allow(dead_code)]
 pub fn run() {
     utils::log_i("QDirStat Terminal");
 
+    // One session per chosen volume. The scanned tree is owned by `session`, so returning
+    // from it drops the tree along with every borrow into it -- which is what makes
+    // selecting a different volume possible without threading lifetimes through the loop.
+    loop {
+        match session() {
+            SessionEnd::Quit => {
+                println!("\n Session terminated.");
+                return;
+            },
+            SessionEnd::Reset => {
+                utils::log_i("Returning to volume selection...");
+            },
+        }
+    }
+}
+
+fn session() -> SessionEnd {
     let mut zipper = Vec::<&FileSystemEntry>::new();
     let mut visited_entries = Vec::<&String>::new();
     let mut root : FileSystemEntry = FileSystemEntry::from_drive(get_root_drive().as_str());
@@ -246,12 +270,15 @@ pub fn run() {
                 utils::log("\t cd: Change current directory. (e.g. cd .. or cd Program Files)");
                 utils::log("\t scan: Recursive scan from current directory downward [Not Implemented]");
                 utils::log("\t open: Opens current directory in the file explorer");
+                utils::log("\t reset: Discard this scan and choose a volume again");
                 utils::log("\t delete: ?? Crazy of you to think I'd take such responsibility. Open the folder and do it yourself!");
                 utils::log("\t quit: Quit program");
             },
             Commands::Quit => {
-                println!("\n Session terminated.");
-                return;
+                return SessionEnd::Quit;
+            }
+            Commands::Reset => {
+                return SessionEnd::Reset;
             }
             Commands::Open => {
                 open_directory(current);

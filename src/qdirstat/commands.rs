@@ -3,6 +3,7 @@ pub enum Commands {
     ChangeDirectory,
     Open,
     Scan,
+    Reset,
     Help,
     Quit,
 }
@@ -55,6 +56,10 @@ impl ToCommand for String {
             cmd.command =  Commands::Scan;
         }
 
+        if string_cmd.eq("reset") {
+            cmd.command = Commands::Reset;
+        }
+
         if string_cmd.eq("open") || string_cmd.eq("start") {
             cmd.command =  Commands::Open;
         }
@@ -68,5 +73,30 @@ mod str_ext {
         return input.strip_suffix("\r\n")
             .or(input.strip_suffix("\n"))
             .unwrap_or(&input);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reset_is_its_own_command() {
+        assert!(matches!(String::from("reset").to_command().command, Commands::Reset));
+        assert!(matches!(String::from("reset\r\n").to_command().command, Commands::Reset));
+    }
+
+    #[test]
+    fn reset_does_not_shadow_the_existing_commands() {
+        assert!(matches!(String::from("quit").to_command().command, Commands::Quit));
+        assert!(matches!(String::from("ls").to_command().command, Commands::ListDirectory));
+        assert!(matches!(String::from("scan").to_command().command, Commands::Scan));
+        assert!(matches!(String::from("open").to_command().command, Commands::Open));
+    }
+
+    #[test]
+    fn an_unknown_word_still_falls_back_to_help() {
+        assert!(matches!(String::from("resets").to_command().command, Commands::Help));
+        assert!(matches!(String::from("re").to_command().command, Commands::Help));
     }
 }
