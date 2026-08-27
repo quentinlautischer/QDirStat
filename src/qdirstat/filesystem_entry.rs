@@ -1,12 +1,14 @@
 pub mod filesystem_entry_type;
 pub mod filesystem_entry_extensions;
+pub mod scan_progress;
+pub mod volume;
 
 use filesystem_entry_type::FileSystemEntryType;
 use filesystem_entry_extensions::*;
+use scan_progress::ScanProgress;
 
 use std::fs;
-
-use std::io::*;
+use std::sync::Arc;
 
 pub struct FileSystemEntry {
     pub identifier: String,
@@ -33,28 +35,43 @@ impl FileSystemEntry {
     }
 
     pub fn scan(&mut self) {
-        let (tx, rx) = std::sync::mpsc::channel();
-        let ticker_thread = std::thread::spawn(move||{
-            loop {
-                if rx.try_recv().is_ok() {
-                    break;
-                }
-                print!(".");
-                stdout().flush().expect("Failed to flush");
-                std::thread::sleep(std::time::Duration::from_secs(1));
-            }
-        });
-        print!("Starting scan...");
+        utils::log_i("Starting scan...");
 
-        self.calculate_children();
+        // Scanning always starts at a drive root, so the volume holding it is the whole
+        // of what there is to scan. None off Windows, which just drops the percentage.
+        let volume_usage = volume::usage(&self.path_string);
 
-        tx.send("thread cancel").expect("Failed to send thread cancel");
-        utils::log_s("...scan completed.");
-        match ticker_thread.join() {
-            Ok(_v) => {},
-            Err(_e) => {
-                utils::log_e("Failed to join");
-            }
+        let progress = Arc::new(ScanProgress::new(volume_usage));
+        let rendered = Arc::clone(&progress);
+        let ticker_thread = std::thread::spawn(move || scan_progress::render_loop(&rendered));
+
+        let started = std::time::Instant::now();
+        self.calculate_children(&progress);
+        let elapsed = started.elapsed();
+
+        // Stop the renderer and wait for it before writing anything else, otherwise the
+        // status line lands on top of the summary.
+        progress.finish();
+        if ticker_thread.join().is_err() {
+            utils::log_e("Failed to join the progress thread");
+        }
+
+        utils::log_s(progress.summary(elapsed).as_str());
+
+        // How full the disk is, which is what the eye is looking for here. Kept separate
+        // from scan coverage below: they are different numbers and were once conflated.
+        if let Some(line) = progress.volume_line() {
+            utils::log(line.as_str());
+        }
+
+        if let Some(warning) = progress.coverage_warning() {
+            utils::log_w(warning.as_str());
+        }
+
+        // Reported once here rather than per file: on a system drive this warning used to
+        // fire thousands of times, straight through the progress line.
+        if let Some(warning) = progress.skipped_warning() {
+            utils::log_w(warning.as_str());
         }
     }
 
@@ -71,46 +88,68 @@ impl FileSystemEntry {
         }
     }
 
-    fn calculate_children(&mut self) {
+    fn calculate_children(&mut self, progress: &ScanProgress) {
         match self.entry_type {
             FileSystemEntryType::File => {
 
             },
             FileSystemEntryType::Directory => {
 
+                progress.enter_directory(&self.path_string);
+
                 let mut directory_items : Vec::<FileSystemEntry> = Vec::<FileSystemEntry>::new();
 
                 match fs::read_dir(&self.path_string) {
                     Err(_e) => {
                         // Unreadable directory: it contributes nothing rather than aborting the scan.
+                        progress.record_skipped();
                     },
                     Ok(entry) => {
                         for e in entry {
                             match e {
                                 Err(_e) => {
+                                    progress.record_skipped();
                                     continue;
                                 },
                                 Ok(e) => {
                                     let entry : &fs::DirEntry = &e;
                                     let filename : String = String::from(entry.file_name().to_str().unwrap());
+
+                                    // Filtered before the metadata call: no reason to pay for a
+                                    // stat on an entry that is about to be dropped.
+                                    if filename.starts_with('$') || filename.eq("System Volume Information") || filename.starts_with('.'){
+                                        continue;
+                                    }
+
                                     let entry_descriptor : FileSystemEntryType;
                                     let mut size : u64 = 0;
                                     match entry.metadata() {
                                         Err(_e) => {
-                                            utils::log_w("Failed to read metadata on file. Consider running as admin");
+                                            progress.record_skipped();
                                             entry_descriptor = FileSystemEntryType::File;
                                         },
                                         Ok(metadata) => {
                                             entry_descriptor = if metadata.is_dir() {FileSystemEntryType::Directory} else {FileSystemEntryType::File};
                                             size = metadata.len();
+                                            if metadata.is_dir() {
+                                                progress.record_directory();
+                                            } else {
+                                                progress.record_file(size);
+                                            }
                                         }
                                     }
-                                    if filename.starts_with('$') || filename.eq("System Volume Information") || filename.starts_with('.'){
-                                        continue;
-                                    }
+                                    let descended = entry_descriptor == FileSystemEntryType::Directory;
+
                                     let mut new_entry = FileSystemEntry::new(&filename, &entry.path().as_path(), entry_descriptor, size);
-                                    new_entry.calculate_children();
+                                    new_entry.calculate_children(progress);
                                     directory_items.push(new_entry);
+
+                                    if descended {
+                                        // Only a directory child overwrites the status path, and
+                                        // files outnumber directories heavily -- no reason to take
+                                        // the lock for every one of them.
+                                        progress.enter_directory(&self.path_string);
+                                    }
                                 }
                             }
                         }
