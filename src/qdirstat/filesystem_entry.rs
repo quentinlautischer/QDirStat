@@ -29,6 +29,25 @@ fn allocated_size(metadata: &fs::Metadata) -> u64 {
     metadata.len()
 }
 
+/// Whether an entry is skipped outright, before it is even stat'd.
+///
+/// Nothing is, on unix. A leading dot means "hidden", not "not worth counting": this
+/// machine keeps ~5.5 GB in .local, .rustup, .cache and .config alone, and hiding it
+/// from a tool whose whole job is to find what fills a disk defeats the tool.
+#[cfg(unix)]
+fn is_excluded(_filename: &str) -> bool {
+    false
+}
+
+/// Windows keeps volume bookkeeping in the root of every drive -- $MFT, $Recycle.Bin,
+/// System Volume Information. It is not the user's data and is mostly unreadable anyway.
+#[cfg(not(unix))]
+fn is_excluded(filename: &str) -> bool {
+    filename.starts_with('$')
+        || filename.eq("System Volume Information")
+        || filename.starts_with('.')
+}
+
 pub struct FileSystemEntry {
     pub identifier: String,
     pub path_string: String,
@@ -136,7 +155,7 @@ impl FileSystemEntry {
 
                                     // Filtered before the metadata call: no reason to pay for a
                                     // stat on an entry that is about to be dropped.
-                                    if filename.starts_with('$') || filename.eq("System Volume Information") || filename.starts_with('.'){
+                                    if is_excluded(&filename) {
                                         continue;
                                     }
 
@@ -276,4 +295,13 @@ mod tests {
         assert_eq!(allocated_size(&metadata), 0, "and occupies none of them");
     }
 
+    #[test]
+    fn hidden_entries_are_still_counted_on_unix() {
+        // The dotfile skip was Windows bookkeeping that also swallowed ~5.5 GB of real
+        // data here: ~/.local, ~/.rustup, ~/.cache, ~/.config and /etc/skel.
+        assert!(!is_excluded(".cache"), "a dotdir is data like any other");
+        assert!(!is_excluded(".bashrc"));
+        assert!(!is_excluded("$Recycle.Bin"), "not a special name on unix");
+        assert!(!is_excluded("Documents"));
+    }
 }
