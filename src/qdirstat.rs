@@ -15,22 +15,140 @@ use dialoguer::{
 };
 use console::Term;
 
+#[cfg(target_os = "linux")]
+const OPEN_HELP: &str = "\t open: Opens a terminal in the current directory";
+
+#[cfg(not(target_os = "linux"))]
+const OPEN_HELP: &str = "\t open: Opens current directory in the file explorer";
+
 #[cfg(target_os = "windows")]
 const FILE_MANAGER: &str = "explorer";
 
 #[cfg(target_os = "macos")]
 const FILE_MANAGER: &str = "open";
 
-#[cfg(target_os = "linux")]
-const FILE_MANAGER: &str = "xdg-open";
-
+/// Wait on a spawned child in the background. Nothing here cares what it exits with,
+/// but something has to collect it or it stays a zombie for the life of the session.
 #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+fn reap(mut child: std::process::Child) {
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+}
+
+/// Off Linux, "open" still means the desktop's file manager.
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 fn open_directory(fse: &FileSystemEntry) {
     let path = fse.path_string.to_string();
     match std::process::Command::new(FILE_MANAGER).arg(path).spawn() {
-        Ok(_child) => {},
+        Ok(child) => reap(child),
         Err(e) => utils::log_w(format!("Failed to open the directory: {}", e).as_str()),
     }
+}
+
+// Detach a child into its own session.
+//
+// Without this the terminal we open stays in QDirStat's process group and dies of the
+// HUP that arrives when QDirStat exits -- observed as foot reporting "slave exited
+// with signal 1 (Hangup)" the instant the window appeared.
+//
+// Declared by hand rather than pulled from a crate, as the Windows call in
+// volume::usage is. That one came with a warning about hand-declaring anything with a
+// struct in it; setsid takes no arguments and returns a pid_t, which is i32 on every
+// Linux target, so there is no layout to get wrong.
+#[cfg(target_os = "linux")]
+extern "C" {
+    fn setsid() -> i32;
+}
+
+/// Arguments that start `terminal` in `path`.
+///
+/// Empty for most of them: a terminal inherits the working directory of whatever
+/// spawned it, and `current_dir` below sets it. The exceptions hand the request to an
+/// already-running server process that does not share our directory, so they have to
+/// be told in as many words.
+#[cfg(target_os = "linux")]
+fn working_directory_arguments(terminal: &str, path: &str) -> Vec<String> {
+    match terminal {
+        "gnome-terminal" | "xfce4-terminal" | "mate-terminal" | "tilix" => {
+            vec![format!("--working-directory={}", path)]
+        }
+        "konsole" => vec!["--workdir".to_string(), path.to_string()],
+        "terminator" => vec!["--working-directory".to_string(), path.to_string()],
+        "wezterm" => vec!["start".to_string(), "--cwd".to_string(), path.to_string()],
+        _ => Vec::new(),
+    }
+}
+
+/// Open a terminal in the scanned directory, which is what someone standing in a
+/// directory listing usually wants next -- to go and deal with what they just found.
+#[cfg(target_os = "linux")]
+fn open_directory(fse: &FileSystemEntry) {
+    use std::os::unix::process::CommandExt;
+
+    let path = fse.path_string.as_str();
+
+    // Checked up front because a missing directory would otherwise fail every spawn
+    // below with NotFound, which reads identically to "that terminal is not installed"
+    // and would end in a wrong diagnosis.
+    if !std::path::Path::new(path).is_dir() {
+        utils::log_w(format!("No longer a directory: {}", path).as_str());
+        return;
+    }
+
+    // Only what the desktop actually says. $TERMINAL is the long-standing convention,
+    // and xdg-terminal-exec is the freedesktop utility that resolves the user's chosen
+    // terminal the way xdg-open resolves a file handler. Guessing past those would mean
+    // shipping a list of emulators that goes stale and can still open the wrong one.
+    let preferred = std::env::var("TERMINAL").unwrap_or_default();
+    let candidates = std::iter::once(preferred.as_str())
+        .filter(|terminal| !terminal.is_empty())
+        .chain(std::iter::once("xdg-terminal-exec"));
+
+    for terminal in candidates {
+        // The file name, so a $TERMINAL given as an absolute path still matches above.
+        let name = std::path::Path::new(terminal)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or(terminal);
+
+        let mut command = std::process::Command::new(terminal);
+        command
+            .args(working_directory_arguments(name, path))
+            .current_dir(path)
+            // A new terminal must not write into the one we are drawing in.
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+
+        // SAFETY: pre_exec runs between fork and exec, where only async-signal-safe
+        // calls are allowed. setsid is a bare syscall and takes no arguments, so it
+        // qualifies. It fails only when the caller already leads a process group,
+        // which a freshly forked child does not, and a failure here is survivable.
+        unsafe {
+            command.pre_exec(|| {
+                setsid();
+                Ok(())
+            });
+        }
+
+        let spawned = command.spawn();
+
+        match spawned {
+            Ok(child) => {
+                reap(child);
+                return;
+            }
+            // Not installed, which is the expected answer for most of the list.
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) => {
+                utils::log_w(format!("Failed to open {}: {}", name, e).as_str());
+                return;
+            }
+        }
+    }
+
+    utils::log_w("No terminal to open. Set $TERMINAL, or install xdg-terminal-exec.");
 }
 
 #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
@@ -269,7 +387,7 @@ fn session() -> SessionEnd {
                 utils::log("\t ls: List current directory");
                 utils::log("\t cd: Change current directory. (e.g. cd .. or cd Program Files)");
                 utils::log("\t scan: Recursive scan from current directory downward [Not Implemented]");
-                utils::log("\t open: Opens current directory in the file explorer");
+                utils::log(OPEN_HELP);
                 utils::log("\t reset: Discard this scan and choose a volume again");
                 utils::log("\t delete: ?? Crazy of you to think I'd take such responsibility. Open the folder and do it yourself!");
                 utils::log("\t quit: Quit program");
@@ -347,4 +465,46 @@ fn session() -> SessionEnd {
         }
     }
    
+}
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn most_terminals_inherit_the_directory_rather_than_being_told() {
+        // These take the working directory from the process that spawned them, so
+        // passing arguments would only be a way to get the quoting wrong.
+        for terminal in ["ghostty", "alacritty", "kitty", "foot", "xterm", "urxvt"] {
+            assert!(
+                working_directory_arguments(terminal, "/tmp/x").is_empty(),
+                "{} inherits the directory",
+                terminal
+            );
+        }
+    }
+
+    #[test]
+    fn server_backed_terminals_are_told_the_directory() {
+        // A running server does not share our working directory, so these have to be
+        // handed the path, each in its own spelling.
+        assert_eq!(
+            working_directory_arguments("gnome-terminal", "/tmp/x"),
+            vec!["--working-directory=/tmp/x"]
+        );
+        assert_eq!(
+            working_directory_arguments("konsole", "/tmp/x"),
+            vec!["--workdir", "/tmp/x"]
+        );
+        assert_eq!(
+            working_directory_arguments("wezterm", "/tmp/x"),
+            vec!["start", "--cwd", "/tmp/x"]
+        );
+    }
+
+    #[test]
+    fn a_path_in_the_directory_is_carried_through_verbatim() {
+        // A directory with a space in it must not arrive as two arguments.
+        let arguments = working_directory_arguments("konsole", "/tmp/two words");
+        assert_eq!(arguments, vec!["--workdir", "/tmp/two words"]);
+    }
 }
