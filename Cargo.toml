@@ -10,6 +10,19 @@ edition = "2021"
 name="utils"
 path="src/utils_lib/lib.rs"
 
+[[bin]]
+name = "qdirstat"
+path = "src/main.rs"
+
+# Aliases: same program, installed under alternate names on the PATH.
+[[bin]]
+name = "QDirStat"
+path = "src/main.rs"
+
+[[bin]]
+name = "qds"
+path = "src/main.rs"
+
 [dependencies]
 termcolor = "1.1"
 console = "0.14"

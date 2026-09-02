@@ -1,0 +1,4 @@
+[alias]
+# `cargo install-local` -> builds release and drops qdirstat, QDirStat and qds
+# into ~/.cargo/bin (already on PATH). --force lets it overwrite a prior install.
+install-local = ["install", "--path", ".", "--force"]
